@@ -83,6 +83,10 @@ Definition is_run (suit : Suit) (meld : Meld) : Prop :=
   Sequential meld /\
   ~ has_middle_ace meld.
 
+Definition is_valid_meld (meld : Meld) : Prop :=
+  (exists rank, is_set rank meld) \/
+  (exists suit, is_run suit meld).
+
 Definition Deck : Type := list Card.
 
 Definition Hand : Type := list Card.
@@ -103,16 +107,173 @@ Definition full_deck (deck : Deck) : Prop :=
   forall card, In card deck.
 
 Definition initial (game : Game) : Prop :=
-  (full_deck (gdeck game)) /\
+  (gdeck game = nil) /\
   (ghands game = nil) /\
   (gtable game = nil).
 
 Definition is_curr (hand : Hand) (hands : Hands) : Prop :=
   value hand = head hands.
 
+Fixpoint is_valid_table (table : Table) : Prop :=
+  forall meld, In meld table -> is_valid_meld meld.
+
+Definition lst_remove {A : Type} (a : A) (lst lst' : list A) : Prop :=
+  exists left right, lst = left ++ a :: right /\ lst' = left ++ right.
+
+Notation "lst '~' a '&' lst'" := (lst_remove a lst lst') (at level 30).
+
+Theorem lst_remove_in :
+  forall {A : Type} (a : A) lst lst', lst ~ a & lst' -> In a lst.
+Proof.
+  intros.
+  unfold lst_remove in H.
+  destruct H as [l [r [H H']]].
+  rewrite H.
+  apply in_or_app.
+  right.
+  apply in_eq.
+Qed.
+
+Theorem lst_remove_exists :
+  forall {A : Type} (a : A) lst, In a lst -> exists lst', lst ~ a & lst'.
+Proof.
+  intros.
+  unfold lst_remove.
+  apply in_split in H.
+  destruct H as [l1 [l2 H]].
+  eauto.
+Qed.
+
+Theorem lst_remove_length :
+  forall {A : Type} (a : A) lst lst', lst ~ a & lst' -> length lst = S (length lst').
+Proof.
+  intros.
+  unfold lst_remove in H.
+  destruct H as [l [r [H H']]].
+  rewrite H, H'.
+  repeat rewrite app_length.
+  simpl. auto.
+Qed.
+
+Theorem lst_remove_not_nil :
+  forall {A : Type} (a : A) lst lst', lst ~ a & lst' -> lst <> nil.
+Proof.
+  intros.
+  apply lst_remove_in in H.
+  unfold not.
+  intro Hempty.
+  rewrite Hempty in H.
+  simpl in H.
+  destruct H.
+Qed.
+
+Definition lst_replace {A : Type} (a a' : A) (lst lst' : list A) : Prop :=
+  exists left right, lst = left ++ a :: right /\ lst' = left ++ a' :: right.
+
+Notation "lst '~(' a ',' a' ')~>' lst'" := (lst_replace a a' lst lst') (at level 30).
+
+Theorem lst_replace_in :
+  forall {A : Type} (a a' : A) lst lst', lst ~( a, a' )~> lst' -> In a lst /\ In a' lst'.
+Proof.
+  intros.
+  unfold lst_replace in H.
+  destruct H as [l [r [H H']]].
+  split;
+  match goal with
+    [ Hx: ?x = _ |- In _ ?x ] =>
+        rewrite Hx;
+        apply in_app_iff;
+        right;
+        apply in_eq
+  end.
+Qed.
+
+Theorem lst_replace_exists :
+  forall {A : Type} (a : A) lst, In a lst ->
+  forall (a' : A), exists lst', lst ~( a, a' )~> lst'.
+Proof.
+  intros.
+  apply in_split in H.
+  destruct H as [l [r H]].
+  exists (l ++ a' :: r).
+  rewrite H.
+  unfold lst_replace.
+  eauto.
+Qed.
+
+Theorem lst_replace_length :
+  forall {A : Type} (a a' : A) lst lst', lst ~( a, a' )~> lst' ->
+  length lst = length lst'.
+Proof.
+  intros.
+  unfold lst_replace in H.
+  destruct H as [l [r [H H']]].
+  rewrite H, H'.
+  repeat rewrite app_length.
+  simpl.
+  trivial.
+Qed.
+
+Theorem lst_replace_not_nil :
+  forall {A : Type} (a a' : A) lst lst', lst ~( a, a' )~> lst' ->
+  lst <> nil /\ lst' <> nil.
+Proof.
+  intros.
+  unfold lst_replace in H.
+  destruct H as [l [r [H H']]].
+  rewrite H, H'.
+  split;
+  match goal with
+    [ Hx: _ = l ++ ?x :: r |- l ++ ?x :: r <> [] ] =>
+        pose (app_cons_not_nil l r x)
+  end;
+  auto.
+Qed.
+
+Reserved Notation "t '-->?' t'" (at level 40).
+
+Inductive table_step : Table -> Table -> Prop :=
+  | split_meld :
+      forall table table1 table2 table' meld meld1 meld2,
+      table ~ meld & table1 -> (* remove a meld from table *)
+      meld = meld1 ++ meld2 -> (* split the meld into two *)
+      meld1 <> nil -> (* first meld must not be empty *)
+      meld2 <> nil -> (* second meld must not be empty *)
+      table2 ~ meld1 & table1 -> (* add first meld *)
+      table' ~ meld2 & table2 -> (* add second meld *)
+      table -->? table'
+  | concat_melds :
+      forall table table1 table2 table' meld1 meld2 meld,
+      table ~ meld1 & table1 -> (* remove one meld from table *)
+      table1 ~ meld2 & table2 -> (* remove another meld from table *)
+      meld = meld1 ++ meld2 -> (* concatenate the melds *)
+      table' ~ meld & table2 -> (* add the concatenated meld to table *)
+      table -->? table'
+
+where "t '-->?' t'" := (table_step t t').
+
+Reserved Notation "t '-->?*' t'" (at level 40).
+
+Inductive multi_table_step : Table -> Table -> Prop :=
+  | no_table_step :
+      forall t,
+      t -->?* t
+  | one_table_step :
+      forall t t' t'',
+      t -->?* t' ->
+      t' -->? t'' ->
+      t -->?* t''
+
+where "t '-->?*' t'" := (multi_table_step t t').
+
 Reserved Notation "g '-->' g'" (at level 40).
 
-Inductive step : Game -> Game -> Prop :=
+Inductive game_step : Game -> Game -> Prop :=
+  | add_deck :
+      forall table hands deck deck' deck'',
+      full_deck deck' ->
+      deck'' = deck ++ deck' ->
+      (table, hands, deck) --> (table, hands, deck'')
   | welcome_player :
       forall table hands hands' deck deck' hand,
       length hand = 9 ->
@@ -125,52 +286,71 @@ Inductive step : Game -> Game -> Prop :=
       deck = card :: deck' ->
       hands' = tail hands ++ [card :: hand] ->
       (table, hands, deck) --> (table, hands', deck')
-  | add_card_to_set :
-      forall table table' hands hands' deck hand hand' handl handr
-             card meld meld' tablel tabler rank,
+  | add_set :
+      forall table table' hands hands' deck hand hand1 hand2 hand'
+             card1 card2 card3 meld rank,
       is_curr hand hands ->
-      hand = handl ++ [card] ++ handr ->
-      crank card = rank ->
-      table = tablel ++ [meld] ++ tabler ->
+      hand ~ card1 & hand1 ->
+      hand1 ~ card2 & hand2 ->
+      hand2 ~ card3 & hand' ->
+      meld = [card1; card2; card3] ->
       is_set rank meld ->
-      meld' = card :: meld ->
-      is_set rank meld' ->
-      hand' = handl ++ handr ->
       hands' = tail hands ++ [hand'] ->
-      table' = tablel ++ [meld'] ++ tabler ->
+      table' ~ meld & table ->
       (table, hands, deck) --> (table', hands', deck)
-  | add_card_to_run :
-      forall table table' hands hands' deck hand hand' handl handr
-             card meld meldl meldr meld' tablel tabler suit,
+  | add_run :
+      forall table table' hands hands' deck hand hand1 hand2 hand'
+             card1 card2 card3 meld suit,
       is_curr hand hands ->
-      hand = handl ++ [card] ++ handr ->
-      csuit card = suit ->
-      table = tablel ++ [meld] ++ tabler ->
+      hand ~ card1 & hand1 ->
+      hand1 ~ card2 & hand2 ->
+      hand2 ~ card3 & hand' ->
+      meld = [card1; card2; card3] ->
       is_run suit meld ->
-      meld = meldl ++ meldr ->
-      meld' = meldl ++ [card] ++ meldr ->
-      is_run suit meld' ->
-      hand' = handl ++ handr ->
       hands' = tail hands ++ [hand'] ->
-      table' = tablel ++ [meld'] ++ tabler ->
+      table' ~ meld & table ->
       (table, hands, deck) --> (table', hands', deck)
+  | add_card_to_set :
+      forall table table' table'' hands hands' deck hand hand'
+             card meld meld' rank,
+      table -->?* table' ->
+      is_valid_table table' ->
+      is_curr hand hands ->
+      hand ~ card & hand' ->
+      crank card = rank ->
+      is_set rank meld ->
+      meld' ~ card & meld ->
+      is_set rank meld' ->
+      hands' = tail hands ++ [hand'] ->
+      table' ~( meld, meld' )~> table'' ->
+      (table, hands, deck) --> (table'', hands', deck)
+  | add_card_to_run :
+      forall table table' table'' hands hands' deck hand hand'
+             card meld meld' suit,
+      table -->?* table' ->
+      is_valid_table table' ->
+      is_curr hand hands ->
+      hand ~ card & hand' ->
+      csuit card = suit ->
+      is_run suit meld ->
+      meld' ~ card & meld ->
+      is_run suit meld' ->
+      hands' = tail hands ++ [hand'] ->
+      table' ~( meld, meld' )~> table'' ->
+      (table, hands, deck) --> (table'', hands', deck)
 
-where "g '-->' g'" := (step g g').
+where "g '-->' g'" := (game_step g g').
 
 Reserved Notation "g '-->*' g'" (at level 40).
 
-Inductive multistep : Game -> Game -> Prop :=
-  | one_step :
-      forall g g',
-      g --> g' ->
-      g -->* g'
-  | transitive_step :
+Inductive multi_game_step : Game -> Game -> Prop :=
+  | no_game_step :
+      forall g,
+      g -->* g
+  | transitive_game_step :
       forall g g' g'',
       g -->* g' ->
       g' --> g'' ->
       g -->* g''
 
-where "g '-->*' g'" := (multistep g g').
-
-Definition valid (g' : Game) : Prop :=
-  exists g, initial g /\ g -->* g'.
+where "g '-->*' g'" := (multi_game_step g g').
