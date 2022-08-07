@@ -47,6 +47,9 @@ Definition crank (card : Card) : Rank := fst card.
 
 Definition csuit (card : Card) : Suit := snd card.
 
+Definition before (c1 c2 : Card) : Prop :=
+  crank c1 = rprev (crank c2).
+
 Definition Meld : Type := list Card.
 
 Fixpoint NoDuplicates (meld : Meld) : Prop :=
@@ -59,6 +62,26 @@ Definition is_set (rank : Rank) (meld : Meld) : Prop :=
   length meld >= 3 /\
   forall card, In card meld -> crank card = rank /\
   NoDuplicates meld.
+
+Fixpoint Sequential (meld : Meld) : Prop :=
+  match meld with
+  | nil => True
+  | card :: meld' => match meld' with
+                     | card' :: _ => before card card' /\ Sequential meld'
+                     | nil => True
+                     end
+  end.
+
+Definition has_middle_ace (meld : Meld) : Prop :=
+  exists card,
+    In card (removelast (tail meld)) /\
+    crank card = Ace.
+
+Definition is_run (suit : Suit) (meld : Meld) : Prop :=
+  length meld >= 3 /\
+  forall card, In card meld -> csuit card = suit /\
+  Sequential meld /\
+  ~ has_middle_ace meld.
 
 Definition Deck : Type := list Card.
 
@@ -79,7 +102,7 @@ Definition gtable (game : Game) : Table := fst (fst game).
 Definition full_deck (deck : Deck) : Prop :=
   forall card, In card deck.
 
-Definition new_game (game : Game) : Prop :=
+Definition initial (game : Game) : Prop :=
   (full_deck (gdeck game)) /\
   (ghands game = nil) /\
   (gtable game = nil).
@@ -110,12 +133,44 @@ Inductive step : Game -> Game -> Prop :=
       crank card = rank ->
       table = tablel ++ [meld] ++ tabler ->
       is_set rank meld ->
-      ~ In card meld ->
+      meld' = card :: meld ->
+      is_set rank meld' ->
       hand' = handl ++ handr ->
       hands' = tail hands ++ [hand'] ->
-      meld' = card :: meld ->
+      table' = tablel ++ [meld'] ++ tabler ->
+      (table, hands, deck) --> (table', hands', deck)
+  | add_card_to_run :
+      forall table table' hands hands' deck hand hand' handl handr
+             card meld meldl meldr meld' tablel tabler suit,
+      is_curr hand hands ->
+      hand = handl ++ [card] ++ handr ->
+      csuit card = suit ->
+      table = tablel ++ [meld] ++ tabler ->
+      is_run suit meld ->
+      meld = meldl ++ meldr ->
+      meld' = meldl ++ [card] ++ meldr ->
+      is_run suit meld' ->
+      hand' = handl ++ handr ->
+      hands' = tail hands ++ [hand'] ->
       table' = tablel ++ [meld'] ++ tabler ->
       (table, hands, deck) --> (table', hands', deck)
 
 where "g '-->' g'" := (step g g').
 
+Reserved Notation "g '-->*' g'" (at level 40).
+
+Inductive multistep : Game -> Game -> Prop :=
+  | one_step :
+      forall g g',
+      g --> g' ->
+      g -->* g'
+  | transitive_step :
+      forall g g' g'',
+      g -->* g' ->
+      g' --> g'' ->
+      g -->* g''
+
+where "g '-->*' g'" := (multistep g g').
+
+Definition valid (g' : Game) : Prop :=
+  exists g, initial g /\ g -->* g'.
